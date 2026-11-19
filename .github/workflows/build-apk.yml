@@ -1,0 +1,794 @@
+name: Build My Goal APK
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build-android-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Generate Complete Native Android Project
+        run: |
+          mkdir -p app/src/main/java/com/mygoal/app
+
+          cat << 'EOF' > settings.gradle.kts
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "MyGoal"
+          include(":app")
+          EOF
+
+          cat << 'EOF' > gradle.properties
+          org.gradle.jvmargs=-Xmx3072m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          kotlin.code.style=official
+          android.nonTransitiveRClass=true
+          EOF
+
+          cat << 'EOF' > build.gradle.kts
+          plugins {
+              id("com.android.application") version "8.3.2" apply false
+              id("org.jetbrains.kotlin.android") version "1.9.23" apply false
+              id("com.google.devtools.ksp") version "1.9.23-1.0.20" apply false
+          }
+          EOF
+
+          cat << 'EOF' > app/build.gradle.kts
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+              id("com.google.devtools.ksp")
+          }
+
+          android {
+              namespace = "com.mygoal.app"
+              compileSdk = 34
+
+              defaultConfig {
+                  applicationId = "com.mygoal.app"
+                  minSdk = 26
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0.0"
+                  vectorDrawables { useSupportLibrary = true }
+              }
+
+              buildTypes {
+                  release {
+                      isMinifyEnabled = false
+                      signingConfig = signingConfigs.getByName("debug")
+                  }
+              }
+
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+
+              kotlinOptions { jvmTarget = "17" }
+              buildFeatures { compose = true }
+              composeOptions { kotlinCompilerExtensionVersion = "1.5.11" }
+              packaging { resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" } }
+          }
+
+          dependencies {
+              val composeBom = platform("androidx.compose:compose-bom:2024.04.01")
+              implementation(composeBom)
+              implementation("androidx.core:core-ktx:1.13.0")
+              implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
+              implementation("androidx.lifecycle:lifecycle-runtime-compose:2.7.0")
+              implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
+              implementation("androidx.activity:activity-compose:1.9.0")
+              implementation("androidx.compose.ui:ui")
+              implementation("androidx.compose.ui:ui-graphics")
+              implementation("androidx.compose.material3:material3")
+              implementation("androidx.compose.material:material-icons-extended")
+              implementation("androidx.navigation:navigation-compose:2.7.7")
+
+              val roomVersion = "2.6.1"
+              implementation("androidx.room:room-runtime:$roomVersion")
+              implementation("androidx.room:room-ktx:$roomVersion")
+              ksp("androidx.room:room-compiler:$roomVersion")
+
+              implementation("androidx.datastore:datastore-preferences:1.1.0")
+              implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.0")
+          }
+          EOF
+
+          cat << 'EOF' > app/src/main/AndroidManifest.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <application
+                  android:allowBackup="true"
+                  android:icon="@android:drawable/ic_menu_agenda"
+                  android:label="My Goal"
+                  android:roundIcon="@android:drawable/ic_menu_agenda"
+                  android:supportsRtl="true"
+                  android:windowSoftInputMode="adjustResize"
+                  android:theme="@android:style/Theme.Material.Light.NoActionBar">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+                      android:windowSoftInputMode="adjustResize">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+
+          cat << 'EOF' > app/src/main/java/com/mygoal/app/MainActivity.kt
+          package com.mygoal.app
+
+          import android.app.Application
+          import android.content.Context
+          import android.content.Intent
+          import android.graphics.BitmapFactory
+          import android.net.Uri
+          import android.os.Bundle
+          import android.util.Base64
+          import androidx.activity.ComponentActivity
+          import androidx.activity.compose.rememberLauncherForActivityResult
+          import androidx.activity.compose.setContent
+          import androidx.activity.result.contract.ActivityResultContracts
+          import androidx.compose.animation.AnimatedVisibility
+          import androidx.compose.animation.core.animateDpAsState
+          import androidx.compose.animation.core.animateFloatAsState
+          import androidx.compose.animation.core.tween
+          import androidx.compose.foundation.*
+          import androidx.compose.foundation.layout.*
+          import androidx.compose.foundation.lazy.LazyColumn
+          import androidx.compose.foundation.lazy.items
+          import androidx.compose.foundation.lazy.itemsIndexed
+          import androidx.compose.foundation.lazy.grid.GridCells
+          import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+          import androidx.compose.foundation.lazy.grid.items as gridItems
+          import androidx.compose.foundation.shape.CircleShape
+          import androidx.compose.foundation.shape.RoundedCornerShape
+          import androidx.compose.foundation.text.BasicTextField
+          import androidx.compose.material.icons.Icons
+          import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+          import androidx.compose.material.icons.automirrored.outlined.FormatListBulleted
+          import androidx.compose.material.icons.automirrored.outlined.Redo
+          import androidx.compose.material.icons.automirrored.outlined.Undo
+          import androidx.compose.material.icons.outlined.*
+          import androidx.compose.material3.*
+          import androidx.compose.runtime.*
+          import androidx.compose.ui.Alignment
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.draw.clip
+          import androidx.compose.ui.draw.scale
+          import androidx.compose.ui.draw.shadow
+          import androidx.compose.ui.graphics.Brush
+          import androidx.compose.ui.graphics.Color
+          import androidx.compose.ui.graphics.SolidColor
+          import androidx.compose.ui.graphics.asImageBitmap
+          import androidx.compose.ui.graphics.vector.ImageVector
+          import androidx.compose.ui.layout.ContentScale
+          import androidx.compose.ui.platform.LocalContext
+          import androidx.compose.ui.platform.LocalLayoutDirection
+          import androidx.compose.ui.text.*
+          import androidx.compose.ui.text.font.FontFamily
+          import androidx.compose.ui.text.font.FontStyle
+          import androidx.compose.ui.text.font.FontWeight
+          import androidx.compose.ui.text.input.OffsetMapping
+          import androidx.compose.ui.text.input.TextFieldValue
+          import androidx.compose.ui.text.input.TransformedText
+          import androidx.compose.ui.text.input.VisualTransformation
+          import androidx.compose.ui.text.style.TextDecoration
+          import androidx.compose.ui.text.style.TextDirection
+          import androidx.compose.ui.text.style.TextOverflow
+          import androidx.compose.ui.unit.LayoutDirection
+          import androidx.compose.ui.unit.dp
+          import androidx.compose.ui.unit.sp
+          import androidx.datastore.preferences.core.booleanPreferencesKey
+          import androidx.datastore.preferences.core.edit
+          import androidx.datastore.preferences.core.stringPreferencesKey
+          import androidx.datastore.preferences.preferencesDataStore
+          import androidx.lifecycle.AndroidViewModel
+          import androidx.lifecycle.viewModelScope
+          import androidx.lifecycle.viewmodel.compose.viewModel
+          import androidx.navigation.NavType
+          import androidx.navigation.compose.NavHost
+          import androidx.navigation.compose.composable
+          import androidx.navigation.compose.rememberNavController
+          import androidx.navigation.navArgument
+          import androidx.room.*
+          import kotlinx.coroutines.Dispatchers
+          import kotlinx.coroutines.delay
+          import kotlinx.coroutines.flow.*
+          import kotlinx.coroutines.launch
+          import kotlinx.coroutines.withContext
+          import org.json.JSONArray
+          import org.json.JSONObject
+          import java.io.File
+          import java.io.FileOutputStream
+          import java.text.SimpleDateFormat
+          import java.util.*
+
+          enum class GoalStatus { ACTIVE, COMPLETED, ARCHIVED }
+
+          @Entity(tableName = "goals")
+          data class GoalEntity(
+              @PrimaryKey val id: String = UUID.randomUUID().toString(),
+              val title: String,
+              val description: String = "",
+              val icon: String = "Star",
+              val color: Long = 0xFFE6EEF8,
+              val status: String = GoalStatus.ACTIVE.name,
+              val createdAt: Long = System.currentTimeMillis(),
+              val updatedAt: Long = System.currentTimeMillis()
+          )
+
+          @Entity(
+              tableName = "notebook_pages",
+              foreignKeys = [
+                  ForeignKey(
+                      entity = GoalEntity::class,
+                      parentColumns = ["id"],
+                      childColumns = ["goalId"],
+                      onDelete = ForeignKey.CASCADE
+                  )
+              ],
+              indices = [Index(value = ["goalId"])]
+          )
+          data class NotebookPageEntity(
+              @PrimaryKey val id: String = UUID.randomUUID().toString(),
+              val goalId: String,
+              val title: String,
+              val content: String,
+              val plainText: String,
+              val pageOrder: Int,
+              val createdAt: Long = System.currentTimeMillis(),
+              val updatedAt: Long = System.currentTimeMillis()
+          )
+
+          data class SearchResultItem(
+              val goalId: String,
+              val goalTitle: String,
+              val goalColor: Long,
+              val goalIcon: String,
+              val pageId: String?,
+              val pageTitle: String?,
+              val snippet: String
+          )
+
+          @Dao
+          interface MyGoalDao {
+              @Query("SELECT * FROM goals ORDER BY createdAt DESC")
+              fun observeAllGoals(): Flow<List<GoalEntity>>
+
+              @Query("SELECT * FROM goals WHERE id = :goalId LIMIT 1")
+              fun observeGoalById(goalId: String): Flow<GoalEntity?>
+
+              @Query("SELECT * FROM goals WHERE id = :goalId LIMIT 1")
+              suspend fun getGoalById(goalId: String): GoalEntity?
+
+              @Query("SELECT * FROM goals")
+              suspend fun getAllGoalsSnapshot(): List<GoalEntity>
+
+              @Insert(onConflict = OnConflictStrategy.REPLACE)
+              suspend fun upsertGoal(goal: GoalEntity)
+
+              @Delete
+              suspend fun deleteGoal(goal: GoalEntity)
+
+              @Query("SELECT * FROM notebook_pages WHERE goalId = :goalId ORDER BY pageOrder ASC, createdAt ASC")
+              fun observePagesForGoal(goalId: String): Flow<List<NotebookPageEntity>>
+
+              @Query("SELECT * FROM notebook_pages WHERE goalId = :goalId ORDER BY pageOrder ASC, createdAt ASC")
+              suspend fun getPagesForGoalSnapshot(goalId: String): List<NotebookPageEntity>
+
+              @Query("SELECT * FROM notebook_pages WHERE id = :pageId LIMIT 1")
+              suspend fun getPageById(pageId: String): NotebookPageEntity?
+
+              @Query("SELECT * FROM notebook_pages")
+              fun observeAllPages(): Flow<List<NotebookPageEntity>>
+
+              @Query("SELECT * FROM notebook_pages")
+              suspend fun getAllPagesSnapshot(): List<NotebookPageEntity>
+
+              @Insert(onConflict = OnConflictStrategy.REPLACE)
+              suspend fun upsertPage(page: NotebookPageEntity)
+
+              @Insert(onConflict = OnConflictStrategy.REPLACE)
+              suspend fun upsertPages(pages: List<NotebookPageEntity>)
+
+              @Query("DELETE FROM notebook_pages WHERE id = :pageId")
+              suspend fun deletePageById(pageId: String)
+
+              @Query("DELETE FROM notebook_pages")
+              suspend fun deleteAllPages()
+
+              @Query("DELETE FROM goals")
+              suspend fun deleteAllGoals()
+
+              @Transaction
+              suspend fun replaceAllData(goals: List<GoalEntity>, pages: List<NotebookPageEntity>) {
+                  deleteAllPages()
+                  deleteAllGoals()
+                  goals.forEach { upsertGoal(it) }
+                  upsertPages(pages)
+              }
+          }
+
+          @Database(entities = [GoalEntity::class, NotebookPageEntity::class], version = 1, exportSchema = false)
+          abstract class MyGoalDatabase : RoomDatabase() {
+              abstract fun dao(): MyGoalDao
+
+              companion object {
+                  @Volatile
+                  private var INSTANCE: MyGoalDatabase? = null
+
+                  fun getInstance(context: Context): MyGoalDatabase {
+                      return INSTANCE ?: synchronized(this) {
+                          Room.databaseBuilder(
+                              context.applicationContext,
+                              MyGoalDatabase::class.java,
+                              "my_goal_cabinet.db"
+                          ).fallbackToDestructiveMigration().build().also { INSTANCE = it }
+                      }
+                  }
+              }
+          }
+
+          private val Context.dataStore by preferencesDataStore(name = "my_goal_settings")
+
+          data class AppSettingsState(
+              val languageCode: String = "ar",
+              val isDarkTheme: Boolean = false
+          )
+
+          class UserPreferences(private val context: Context) {
+              private val KEY_LANGUAGE = stringPreferencesKey("app_language")
+              private val KEY_DARK_THEME = booleanPreferencesKey("dark_theme")
+
+              val settingsFlow: Flow<AppSettingsState> = context.dataStore.data.map { prefs ->
+                  AppSettingsState(
+                      languageCode = prefs[KEY_LANGUAGE] ?: "ar",
+                      isDarkTheme = prefs[KEY_DARK_THEME] ?: false
+                  )
+              }
+
+              suspend fun setLanguage(languageCode: String) {
+                  context.dataStore.edit { it[KEY_LANGUAGE] = languageCode }
+              }
+
+              suspend fun setDarkTheme(isDark: Boolean) {
+                  context.dataStore.edit { it[KEY_DARK_THEME] = isDark }
+              }
+          }
+
+          object BackupSerializer {
+              fun exportToJson(context: Context, goals: List<GoalEntity>, pages: List<NotebookPageEntity>): String {
+                  val root = JSONObject()
+                  root.put("app", "MyGoal")
+                  root.put("version", 1)
+                  root.put("exportedAt", System.currentTimeMillis())
+
+                  val goalsArray = JSONArray()
+                  goals.forEach { g ->
+                      goalsArray.put(JSONObject().apply {
+                          put("id", g.id)
+                          put("title", g.title)
+                          put("description", g.description)
+                          put("icon", g.icon)
+                          put("color", g.color)
+                          put("status", g.status)
+                          put("createdAt", g.createdAt)
+                          put("updatedAt", g.updatedAt)
+                      })
+                  }
+                  root.put("goals", goalsArray)
+
+                  val pagesArray = JSONArray()
+                  pages.forEach { p ->
+                      pagesArray.put(JSONObject().apply {
+                          put("id", p.id)
+                          put("goalId", p.goalId)
+                          put("title", p.title)
+                          put("content", p.content)
+                          put("plainText", p.plainText)
+                          put("pageOrder", p.pageOrder)
+                          put("createdAt", p.createdAt)
+                          put("updatedAt", p.updatedAt)
+                      })
+                  }
+                  root.put("pages", pagesArray)
+
+                  val imagesObject = JSONObject()
+                  val imageDir = File(context.filesDir, "notebook_images")
+                  if (imageDir.exists() && imageDir.isDirectory) {
+                      imageDir.listFiles()?.forEach { file ->
+                          if (file.isFile && file.length() < 8 * 1024 * 1024) {
+                              imagesObject.put(file.name, Base64.encodeToString(file.readBytes(), Base64.NO_WRAP))
+                          }
+                      }
+                  }
+                  root.put("images", imagesObject)
+                  return root.toString(2)
+              }
+
+              fun importFromJson(context: Context, jsonString: String): Pair<List<GoalEntity>, List<NotebookPageEntity>> {
+                  val root = JSONObject(jsonString)
+                  val goalsArray = root.optJSONArray("goals") ?: JSONArray()
+                  val pagesArray = root.optJSONArray("pages") ?: JSONArray()
+                  val imagesObject = root.optJSONObject("images")
+
+                  val goals = mutableListOf<GoalEntity>()
+                  for (i in 0 until goalsArray.length()) {
+                      val g = goalsArray.getJSONObject(i)
+                      goals.add(
+                          GoalEntity(
+                              id = g.getString("id"),
+                              title = g.getString("title"),
+                              description = g.optString("description", ""),
+                              icon = g.optString("icon", "Star"),
+                              color = g.optLong("color", 0xFFE6EEF8),
+                              status = g.optString("status", GoalStatus.ACTIVE.name),
+                              createdAt = g.optLong("createdAt", System.currentTimeMillis()),
+                              updatedAt = g.optLong("updatedAt", System.currentTimeMillis())
+                          )
+                      )
+                  }
+
+                  val imageDir = File(context.filesDir, "notebook_images")
+                  if (!imageDir.exists()) imageDir.mkdirs()
+                  if (imagesObject != null) {
+                      val keys = imagesObject.keys()
+                      while (keys.hasNext()) {
+                          val fileName = keys.next()
+                          val b64 = imagesObject.optString(fileName, "")
+                          if (b64.isNotBlank()) {
+                              runCatching {
+                                  File(imageDir, fileName).writeBytes(Base64.decode(b64, Base64.NO_WRAP))
+                              }
+                          }
+                      }
+                  }
+
+                  val pages = mutableListOf<NotebookPageEntity>()
+                  for (i in 0 until pagesArray.length()) {
+                      val p = pagesArray.getJSONObject(i)
+                      pages.add(
+                          NotebookPageEntity(
+                              id = p.getString("id"),
+                              goalId = p.getString("goalId"),
+                              title = p.getString("title"),
+                              content = p.getString("content"),
+                              plainText = p.optString("plainText", ""),
+                              pageOrder = p.optInt("pageOrder", i),
+                              createdAt = p.optLong("createdAt", System.currentTimeMillis()),
+                              updatedAt = p.optLong("updatedAt", System.currentTimeMillis())
+                          )
+                      )
+                  }
+                  return goals to pages
+              }
+          }
+
+          val WarmOffWhite = Color(0xFFFAF8F5)
+          val WarmCabinetFrame = Color(0xFFEDE8DF)
+          val WarmCabinetBorder = Color(0xFFD8D0C5)
+          val DeepNavy = Color(0xFF1B2A4A)
+          val DeepNavyDark = Color(0xFF10192E)
+          val SoftPurple = Color(0xFF6C63FF)
+          val SoftPurpleLight = Color(0xFFEDE9FE)
+          val InkDark = Color(0xFF1E2430)
+          val InkMuted = Color(0xFF5E6675)
+
+          data class DrawerColorOption(val hex: Long, val nameEn: String, val nameAr: String)
+
+          val PastelDrawerColors = listOf(
+              DrawerColorOption(0xFFE6EEF8, "Mist Blue", "أزرق ضبابي"),
+              DrawerColorOption(0xFFEDE8F8, "Soft Lavender", "لافندر ناعم"),
+              DrawerColorOption(0xFFE6F4EA, "Sage Mint", "أخضر ميرمية"),
+              DrawerColorOption(0xFFFFF2DE, "Warm Amber", "كهرماني دافئ"),
+              DrawerColorOption(0xFFFCE8E8, "Blush Rose", "وردي هادئ"),
+              DrawerColorOption(0xFFE3F4F4, "Calm Teal", "فيروزي هادئ"),
+              DrawerColorOption(0xFFF4EFE6, "Sandstone", "رملي طبيعي"),
+              DrawerColorOption(0xFFEFE8F4, "Orchid Tint", "أوركيد فاتح")
+          )
+
+          data class GoalIconOption(val key: String, val icon: ImageVector)
+
+          val CuratedGoalIcons = listOf(
+              GoalIconOption("Star", Icons.Outlined.StarOutline),
+              GoalIconOption("Book", Icons.Outlined.MenuBook),
+              GoalIconOption("Language", Icons.Outlined.Language),
+              GoalIconOption("Fitness", Icons.Outlined.FitnessCenter),
+              GoalIconOption("Business", Icons.Outlined.Storefront),
+              GoalIconOption("Code", Icons.Outlined.Terminal),
+              GoalIconOption("Lightbulb", Icons.Outlined.Lightbulb),
+              GoalIconOption("School", Icons.Outlined.School),
+              GoalIconOption("Brush", Icons.Outlined.Palette),
+              GoalIconOption("Savings", Icons.Outlined.Savings),
+              GoalIconOption("Explore", Icons.Outlined.Explore),
+              GoalIconOption("Psychology", Icons.Outlined.Psychology),
+              GoalIconOption("Music", Icons.Outlined.MusicNote),
+              GoalIconOption("Rocket", Icons.Outlined.RocketLaunch),
+              GoalIconOption("Heart", Icons.Outlined.FavoriteBorder),
+              GoalIconOption("Trophy", Icons.Outlined.EmojiEvents)
+          )
+
+          fun getGoalIconByKey(key: String): ImageVector =
+              CuratedGoalIcons.firstOrNull { it.key == key }?.icon ?: Icons.Outlined.StarOutline
+
+          private val LightColors = lightColorScheme(
+              primary = DeepNavy,
+              onPrimary = Color.White,
+              primaryContainer = Color(0xFFDCE4F5),
+              onPrimaryContainer = DeepNavy,
+              secondary = SoftPurple,
+              onSecondary = Color.White,
+              secondaryContainer = SoftPurpleLight,
+              onSecondaryContainer = Color(0xFF2D2570),
+              background = WarmOffWhite,
+              onBackground = InkDark,
+              surface = Color.White,
+              onSurface = InkDark,
+              surfaceVariant = WarmCabinetFrame,
+              onSurfaceVariant = InkMuted,
+              outline = WarmCabinetBorder
+          )
+
+          private val DarkColors = darkColorScheme(
+              primary = Color(0xFF9EB5E8),
+              onPrimary = DeepNavyDark,
+              primaryContainer = Color(0xFF283756),
+              onPrimaryContainer = Color(0xFFE2EBF8),
+              secondary = Color(0xFF9B95FF),
+              onSecondary = Color(0xFF1A1640),
+              secondaryContainer = Color(0xFF332E6A),
+              onSecondaryContainer = Color(0xFFE6E4FF),
+              background = Color(0xFF111520),
+              onBackground = Color(0xFFF3F4F6),
+              surface = Color(0xFF1A2030),
+              onSurface = Color(0xFFF3F4F6),
+              surfaceVariant = Color(0xFF232B3E),
+              onSurfaceVariant = Color(0xFF9CA3AF),
+              outline = Color(0xFF343E54)
+          )
+
+          @Composable
+          fun MyGoalTheme(darkTheme: Boolean, content: @Composable () -> Unit) {
+              MaterialTheme(
+                  colorScheme = if (darkTheme) DarkColors else LightColors,
+                  content = content
+              )
+          }
+
+          data class AppStrings(
+              val appName: String,
+              val tagline: String,
+              val activeGoals: String,
+              val completedGoals: String,
+              val archivedGoals: String,
+              val addNewGoal: String,
+              val searchHintGlobal: String,
+              val searchWithinNotebook: String,
+              val emptyCabinetTitle: String,
+              val emptyCabinetSubtitle: String,
+              val createGoalTitle: String,
+              val editGoalTitle: String,
+              val goalNameLabel: String,
+              val goalNameRequired: String,
+              val goalDescriptionLabel: String,
+              val chooseIconLabel: String,
+              val chooseDrawerColorLabel: String,
+              val save: String,
+              val cancel: String,
+              val delete: String,
+              val confirmDeleteGoalTitle: String,
+              val confirmDeleteGoalMessage: String,
+              val confirmDeletePageTitle: String,
+              val confirmDeletePageMessage: String,
+              val markCompleted: String,
+              val reopenGoal: String,
+              val archiveGoal: String,
+              val restoreGoal: String,
+              val editGoal: String,
+              val createdOn: String,
+              val lastEdited: String,
+              val notebookPages: String,
+              val addNewPage: String,
+              val emptyNotebookTitle: String,
+              val emptyNotebookSubtitle: String,
+              val untitledPage: String,
+              val pageTitlePlaceholder: String,
+              val startWritingPlaceholder: String,
+              val autoSaved: String,
+              val saving: String,
+              val allPagesSheetTitle: String,
+              val renamePage: String,
+              val duplicatePage: String,
+              val moveUp: String,
+              val moveDown: String,
+              val insertLinkTitle: String,
+              val linkTextLabel: String,
+              val linkUrlLabel: String,
+              val addRow: String,
+              val addColumn: String,
+              val settingsTitle: String,
+              val languageLabel: String,
+              val english: String,
+              val arabic: String,
+              val appearanceLabel: String,
+              val lightTheme: String,
+              val darkTheme: String,
+              val backupAndRestore: String,
+              val backupSubtitle: String,
+              val exportBackupButton: String,
+              val restoreBackupButton: String,
+              val confirmRestoreTitle: String,
+              val confirmRestoreMessage: String,
+              val confirmRestoreAction: String,
+              val backupSuccess: String,
+              val restoreSuccess: String,
+              val operationError: String,
+              val aboutMyGoal: String,
+              val aboutDescription: String,
+              val versionLabel: String,
+              val noSearchResults: String,
+              val noCompletedGoals: String,
+              val noArchivedGoals: String,
+              val pagesCountSuffix: String
+          )
+
+          val EnglishStrings = AppStrings(
+              appName = "My Goal",
+              tagline = "Every Goal Has Its Own Space.",
+              activeGoals = "Active",
+              completedGoals = "Completed",
+              archivedGoals = "Archived",
+              addNewGoal = "Add New Goal",
+              searchHintGlobal = "Search goals, pages, and notes...",
+              searchWithinNotebook = "Search inside this notebook...",
+              emptyCabinetTitle = "Your Goal Cabinet is Empty",
+              emptyCabinetSubtitle = "Add your first drawer to give a personal goal its own dedicated space and notebook.",
+              createGoalTitle = "New Goal Drawer",
+              editGoalTitle = "Edit Goal Drawer",
+              goalNameLabel = "Goal Name",
+              goalNameRequired = "Please enter a goal name",
+              goalDescriptionLabel = "Short Description (Optional)",
+              chooseIconLabel = "Drawer Icon",
+              chooseDrawerColorLabel = "Drawer Color",
+              save = "Save",
+              cancel = "Cancel",
+              delete = "Delete",
+              confirmDeleteGoalTitle = "Delete Goal Drawer?",
+              confirmDeleteGoalMessage = "This will permanently delete this goal and all pages inside its notebook.",
+              confirmDeletePageTitle = "Delete Page?",
+              confirmDeletePageMessage = "This page and its contents will be permanently removed.",
+              markCompleted = "Mark as Completed",
+              reopenGoal = "Reopen Goal",
+              archiveGoal = "Move to Archive",
+              restoreGoal = "Restore to Active",
+              editGoal = "Edit Drawer",
+              createdOn = "Created",
+              lastEdited = "Updated",
+              notebookPages = "Pages",
+              addNewPage = "New Page",
+              emptyNotebookTitle = "This Notebook is Open & Ready",
+              emptyNotebookSubtitle = "Create your first page however you like—Ideas, Research, Plans, Notes, or Experiments.",
+              untitledPage = "Untitled Page",
+              pageTitlePlaceholder = "Page Title...",
+              startWritingPlaceholder = "Write freely here...",
+              autoSaved = "Saved",
+              saving = "Saving...",
+              allPagesSheetTitle = "Notebook Pages",
+              renamePage = "Rename Page",
+              duplicatePage = "Duplicate",
+              moveUp = "Move Up",
+              moveDown = "Move Down",
+              insertLinkTitle = "Insert Hyperlink",
+              linkTextLabel = "Link Label",
+              linkUrlLabel = "URL (https://...)",
+              addRow = "+ Row",
+              addColumn = "+ Column",
+              settingsTitle = "Settings",
+              languageLabel = "Application Language",
+              english = "English",
+              arabic = "العربية",
+              appearanceLabel = "Theme",
+              lightTheme = "Light Cabinet",
+              darkTheme = "Dark Cabinet",
+              backupAndRestore = "Backup & Restore",
+              backupSubtitle = "Export all your goal drawers and notebooks to a file on your phone, or restore from a backup.",
+              exportBackupButton = "Export Backup File (.json)",
+              restoreBackupButton = "Restore from Backup File",
+              confirmRestoreTitle = "Replace Current Data?",
+              confirmRestoreMessage = "Restoring a backup will replace your current drawers and notebooks with the backup file.",
+              confirmRestoreAction = "Restore Now",
+              backupSuccess = "Backup saved successfully!",
+              restoreSuccess = "Backup restored successfully!",
+              operationError = "Could not complete file operation.",
+              aboutMyGoal = "About My Goal",
+              aboutDescription = "A personal digital cabinet for your goals and a free-form notebook for every journey. Think. Write. Organize. Achieve.",
+              versionLabel = "Version 1.0.0",
+              noSearchResults = "No matching goals or notebook pages found.",
+              noCompletedGoals = "No completed goals yet.",
+              noArchivedGoals = "No archived goals.",
+              pagesCountSuffix = "pages"
+          )
+
+          val ArabicStrings = AppStrings(
+              appName = "My Goal — هدفي",
+              tagline = "لكل هدف مساحته الخاصة.",
+              activeGoals = "النشطة",
+              completedGoals = "المكتملة",
+              archivedGoals = "الأرشيف",
+              addNewGoal = "إضافة هدف جديد",
+              searchHintGlobal = "ابحث في الأهداف، الصفحات، والملاحظات...",
+              searchWithinNotebook = "ابحث داخل هذا الدفتر...",
+              emptyCabinetTitle = "خزانة أهدافك فارغة حالياً",
+              emptyCabinetSubtitle = "أضف أول درج لهدفك وامنحه مساحته الخاصة ودفتره المستقل.",
+              createGoalTitle = "درج هدف جديد",
+              editGoalTitle = "تعديل درج الهدف",
+              goalNameLabel = "اسم الهدف",
+              goalNameRequired = "يرجى إدخال اسم الهدف",
+              goalDescriptionLabel = "وصف قصير (اختياري)",
+              chooseIconLabel = "أيقونة الدرج",
+              chooseDrawerColorLabel = "لون الدرج",
+              save = "حفظ",
+              cancel = "إلغاء",
+              delete = "حذف",
+              confirmDeleteGoalTitle = "حذف درج الهدف؟",
+              confirmDeleteGoalMessage = "سيؤدي هذا إلى حذف الهدف وجميع الصفحات الموجودة داخل دفتره نهائياً.",
+              confirmDeletePageTitle = "حذف الصفحة؟",
+              confirmDeletePageMessage = "سيتم حذف هذه الصفحة ومحتوياتها نهائياً.",
+              markCompleted = "تحديد كمكتمل",
+              reopenGoal = "إعادة فتح الهدف",
+              archiveGoal = "نقل إلى الأرشيف",
+              restoreGoal = "استعادة إلى النشطة",
+              editGoal = "تعديل الدرج",
+              createdOn = "أُنشئ في",
+              lastEdited = "آخر تحديث",
+              notebookPages = "الصفحات",
+              addNewPage = "صفحة جديدة",
+              emptyNotebookTitle = "دفترك جاهز للكتابة الحرة",
+              emptyNotebookSubtitle = "أنشئ صفحتك الأولى بالطريقة التي تناسبك: أفكار، أبحاث، خطط، تجارب، أو ملاحظات.",
+              untitledPage = "صفحة بدون عنوان",
+              pageTitlePlaceholder = "عنوان الصفحة...",
+              startWritingPlaceholder = "اكتب بحرية هنا...",
+              autoSaved = "تم الحفظ",
+              saving = "جارٍ الحفظ...",
+              allPagesSheetTitle = "صفحات الدفتر",
+              renamePage = "إعادة تسمية الصفحة",
+              duplicatePage = "نسخ الصفحة",
+              moveUp = "تحريك لأعلى",
+              moveDown = "تحريك لأسفل",
+              insertLinkTitle = "إدراج رابط",
+              linkTextLabel = "عنوان الرابط",
+              linkUrlLabel = "الرابط (https://...)",
+              addRow = "+ صف",
+              addColumn = "+ عمود",
+              settingsTitle = "الإعدادات",
+              languageLabel = "لغة التطبيق",
+              english = 
